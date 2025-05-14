@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ビンゴマシーン</title>
+    <style>
+      .wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+
+      /* ビンゴカード全体を5x5のグリッドで表示 */
+      .bingo-card {
+        display: grid;
+        grid-template-columns: repeat(5, 40px);
+        grid-template-rows: repeat(5, 40px);
+        gap: 5px;
+      }
+
+      /* ビンゴのマスの見た目 */
+      .bingo-card div {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background-color: #eee;
+        border: 1px solid #ccc;
+        font-weight: bold;
+      }
+
+      /* 真ん中のFREEマス */
+      .bingo-card .free {
+        background-color: gold;
+      }
+
+      /* 抽選された番号に該当するマス */
+      .bingo-card .hit {
+        background-color: tomato;
+        color: #fff;
+      }
+
+      /* ビンゴ成立したマスに付ける光る効果 */
+      .bingo-card .bingo-line {
+        animation: blink 0.6s infinite alternate;
+      }
+
+      /* 点滅アニメーション */
+      @keyframes blink {
+        0% {
+          background-color: #ff6347;
+        }
+        100% {
+          background-color: #ff0;
+          color: #000;
+        }
+      }
+
+      /* メッセージ表示用 */
+      .message {
+        position: absolute;
+        top: 10%;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 3rem;
+        font-weight: bold;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: none;
+        z-index: 10;
+      }
+
+      /* BINGO! のメッセージ演出 */
+      .bingo-msg {
+        color: #32cd32;
+        text-shadow: 0 0 10px #32cd32;
+        animation: popup 0.5s ease-out forwards;
+      }
+
+      /* リーチのメッセージ演出 */
+      .reach-msg {
+        color: #ffd700;
+        text-shadow: 0 0 10px #ffd700;
+        animation: popup 0.5s ease-out forwards;
+      }
+
+      /* メッセージ表示時のアニメーション */
+      @keyframes popup {
+        0% {
+          opacity: 0;
+          transform: translate(-50%, -30%) scale(0.8);
+        }
+        100% {
+          opacity: 1;
+          transform: translate(-50%, 0%) scale(1);
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="wrapper">
+      <h1>BINGO GAME</h1>
+      <!-- 各種ボタン -->
+      <div class="btn">
+        <button class="start">START</button>
+        <button class="stop">STOP</button>
+        <button class="reset">RESET</button>
+        <button class="generate">NEW GAME</button>
+      </div>
+      <!-- 抽選結果と履歴 -->
+      <p class="result">0</p>
+      <p class="history"></p>
+      <!-- ビンゴカード本体 -->
+      <div class="bingo-card" id="bingoCard"></div>
+      <!-- メッセージ表示 -->
+      <div id="message" class="message"></div>
+    </div>
+
+    <script>
+      // ボタン要素取得
+      const startBtn = document.querySelector(".start");
+      const stopBtn = document.querySelector(".stop");
+      const resetBtn = document.querySelector(".reset");
+      const generateBtn = document.querySelector(".generate");
+
+      // 表示エリア要素取得
+      const resultEl = document.querySelector(".result");
+      const historyEl = document.querySelector(".history");
+      const bingoCardEl = document.getElementById("bingoCard");
+      const messageEl = document.getElementById("message");
+
+      // 数字配列（1〜75）
+      const num = Array.from({ length: 75 }, (_, i) => i + 1);
+
+      // ゲーム状態管理用変数
+      let randomNum = [];
+      let historyNum = [];
+      let currentIndex = 0;
+      let timeId = null;
+      let isRunning = false;
+      let hasBingo = false; // ✅ 追加：ビンゴ済みフラグ
+
+      // 配列シャッフル関数（Fisher–Yates）
+      const shuffle = (array) => {
+        for (let i = array.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [array[i], array[j]] = [array[j], array[i]];
+        }
+        return array;
+      };
+
+      // ゲームリセット
+      const resetState = () => {
+        isRunning = false;
+        hasBingo = false; // ✅ ビンゴフラグ初期化
+        clearInterval(timeId);
+        currentIndex = 0;
+        randomNum = shuffle([...num]);
+        historyNum = [];
+        resultEl.textContent = 0;
+        historyEl.textContent = "";
+        messageEl.textContent = "";
+        messageEl.className = "message";
+
+        // 全マス初期化
+        const cells = document.querySelectorAll("#bingoCard div");
+        cells.forEach((cell) => {
+          cell.classList.remove("hit", "bingo-line");
+        });
+      };
+
+      // 数字をランダムで表示する
+      const startRandom = () => {
+        if (hasBingo) return; // ✅ ビンゴなら開始不可
+        clearInterval(timeId);
+        timeId = setInterval(() => {
+          currentIndex = (currentIndex + 1) % randomNum.length;
+          resultEl.textContent = randomNum[currentIndex];
+        }, 30);
+        setGameButtonsEnabled(true);
+      };
+
+      const setGameButtonsEnabled = (enabled) => {
+        startBtn.disabled = !enabled;
+        stopBtn.disabled = !enabled;
+        resetBtn.disabled = !enabled;
+      };
+
+      // STOP処理（番号確定＆判定）
+      const stopRandom = () => {
+        if (hasBingo || isRunning || randomNum.length === 0) return; // ✅ ビンゴ済・実行中・終了なら無効
+
+        isRunning = false;
+        clearInterval(timeId);
+
+        const [selected] = randomNum.splice(currentIndex, 1);
+        if (selected !== undefined) {
+          historyNum.push(selected);
+        }
+
+        resultEl.textContent = selected;
+        historyEl.textContent = historyNum.join(", ");
+        currentIndex = 0;
+
+        const cells = document.querySelectorAll("#bingoCard div");
+        cells.forEach((cell) => {
+          if (cell.dataset.value == selected) {
+            cell.classList.add("hit");
+          }
+        });
+
+        const status = checkBingoStatus();
+        if (status.bingoLines.length > 0) {
+          hasBingo = true; // ✅ ビンゴ状態にする
+          status.bingoLines.forEach((line) => {
+            line.forEach((i) => {
+              cells[i].classList.add("bingo-line");
+            });
+          });
+          showMessage("🎉 BINGO! 🎉", "bingo-msg");
+          setGameButtonsEnabled(false);
+        } else if (status.reachCount > 0) {
+          showMessage("⚡ リーチ！", "reach-msg");
+        }
+      };
+
+      // ビンゴカードの生成
+      const generateBingoCard = () => {
+        const numbers = shuffle([...num]);
+        const card = numbers.slice(0, 24);
+        card.splice(12, 0, "FREE");
+
+        bingoCardEl.innerHTML = "";
+        card.forEach((value) => {
+          const cell = document.createElement("div");
+          cell.textContent = value;
+          if (value === "FREE") {
+            cell.classList.add("free", "hit");
+          } else {
+            cell.dataset.value = value;
+          }
+          bingoCardEl.appendChild(cell);
+        });
+      };
+
+      // ビンゴ・リーチ判定
+      const checkBingoStatus = () => {
+        const cells = document.querySelectorAll("#bingoCard div");
+        const getIndex = (row, col) => row * 5 + col;
+        const lines = [];
+
+        for (let row = 0; row < 5; row++) {
+          lines.push(Array.from({ length: 5 }, (_, i) => getIndex(row, i)));
+        }
+        for (let col = 0; col < 5; col++) {
+          lines.push(Array.from({ length: 5 }, (_, i) => getIndex(i, col)));
+        }
+        lines.push([0, 6, 12, 18, 24]);
+        lines.push([4, 8, 12, 16, 20]);
+
+        let bingoLines = [];
+        let reachCount = 0;
+
+        lines.forEach((line) => {
+          const hitCount = line.filter((i) =>
+            cells[i].classList.contains("hit")
+          ).length;
+
+          if (hitCount === 5) {
+            bingoLines.push(line);
+          } else if (hitCount === 4) {
+            reachCount++;
+          }
+        });
+
+        return { bingoLines, reachCount };
+      };
+
+      // メッセージ表示
+      const showMessage = (text, className) => {
+        messageEl.textContent = text;
+        messageEl.className = "message " + className;
+        setTimeout(() => {
+          messageEl.textContent = "";
+          messageEl.className = "message";
+        }, 2000);
+      };
+
+      // イベント登録
+      startBtn.addEventListener("click", startRandom);
+      stopBtn.addEventListener("click", stopRandom);
+      resetBtn.addEventListener("click", resetState);
+      generateBtn.addEventListener("click", () => {
+        generateBingoCard();
+        resetState();
+      });
+
+      // 初期化処理
+      generateBingoCard();
+      resetState();
+    </script>
+  </body>
+</html>
